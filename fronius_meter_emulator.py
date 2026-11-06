@@ -17,6 +17,9 @@ Simulationsmodus (ohne Tasmota), z.B.:
     python fronius_meter_emulator.py --sim 1000
     python fronius_meter_emulator.py --sim 400 500 1000 3000 --sim-interval 30
 Im laufenden Betrieb kann ein neuer Wert in der Konsole eingegeben werden.
+
+Mehrere Instanzen auf einem PC: je Instanz eigener --port (oder --host),
+eigene --unit-id und eigene --serial verwenden (siehe --help).
 """
 
 import argparse
@@ -44,6 +47,9 @@ UNIT_ID = None               # None = auf jede Unit-ID antworten, sonst z.B. 1
 
 NOMINAL_VOLTAGE = 230.0      # Wird gemeldet, da der Lesekopf keine Spannung liefert
 NOMINAL_FREQ = 50.0
+
+SERIAL = "00000001"          # Seriennummer; bei mehreren Instanzen unterschiedlich!
+NAME = ""                    # Praefix fuer die Konsolenausgabe, z.B. "Netz"
 # =======================================================
 
 SUNSPEC_BASE = 40000         # Fronius liest ab Protokolladresse 40000
@@ -70,6 +76,10 @@ regs = [0] * REG_COUNT
 state = {"power": 0.0, "imp_wh": 0.0, "exp_wh": 0.0, "last_ok": 0.0}
 
 
+def log(msg):
+    print(f"[{NAME}] {msg}" if NAME else msg, flush=True)
+
+
 def _str_regs(text, n_regs):
     raw = text.encode("ascii")[: n_regs * 2].ljust(n_regs * 2, b"\x00")
     return list(struct.unpack(f">{n_regs}H", raw))
@@ -94,8 +104,8 @@ def init_static_registers():
     _set(o + 16, _str_regs("Smart Meter TS 65A-3", 16))  # Md
     _set(o + 32, _str_regs("", 8))                # Opt
     _set(o + 40, _str_regs("1.0", 8))             # Vr
-    _set(o + 48, _str_regs("00000001", 16))       # SN
-    regs[o + 64] = 1                              # DA
+    _set(o + 48, _str_regs(SERIAL, 16))           # SN
+    regs[o + 64] = UNIT_ID if UNIT_ID is not None else 1  # DA
     _set(OFF_METER, [213, 124])                   # Meter Model 213, Laenge 124
     _set(OFF_END, [0xFFFF, 0])
 
@@ -143,7 +153,7 @@ async def poll_tasmota():
             meter = data.get("StatusSNS", {}).get(JSON_PREFIX, {})
             power = meter.get(FIELD_POWER)
             if power is None:
-                print(f"[Tasmota] Feld '{FIELD_POWER}' in '{JSON_PREFIX}' fehlt: {meter}")
+                log(f"[Tasmota] Feld '{FIELD_POWER}' in '{JSON_PREFIX}' fehlt: {meter}")
             else:
                 power = float(power)
                 state["power"] = -power if INVERT_SIGN else power
@@ -153,11 +163,11 @@ async def poll_tasmota():
                     state["exp_wh"] = float(meter[FIELD_EXPORT]) * 1000.0
                 state["last_ok"] = time.monotonic()
                 update_meter_registers()
-                print(f"[Tasmota] {state['power']:.0f} W  "
+                log(f"[Tasmota] {state['power']:.0f} W  "
                       f"Bezug {state['imp_wh'] / 1000:.3f} kWh  "
                       f"Einsp. {state['exp_wh'] / 1000:.3f} kWh")
         except Exception as exc:  # noqa: BLE001
-            print(f"[Tasmota] nicht erreichbar: {exc}")
+            log(f"[Tasmota] nicht erreichbar: {exc}")
         await asyncio.sleep(POLL_INTERVAL)
 
 
@@ -168,7 +178,7 @@ sim = {"values": [], "index": 0, "next_switch": 0.0, "manual": False}
 
 def _set_sim_power(watt):
     state["power"] = float(watt)
-    print(f"[Simulation] Leistung jetzt {watt:.0f} W "
+    log(f"[Simulation] Leistung jetzt {watt:.0f} W "
           f"({'Bezug' if watt >= 0 else 'Einspeisung'})")
 
 
@@ -206,7 +216,7 @@ async def read_console():
     """Neuen Simulationswert per Tastatur setzen (Zahl + Enter, 'q' = Ende)."""
     if not sys.stdin or not sys.stdin.isatty():
         return
-    print("[Simulation] Neuen Wert in W eingeben + Enter "
+    log("[Simulation] Neuen Wert in W eingeben + Enter "
           "(negativ = Einspeisung, 'auto' = Liste fortsetzen, 'q' = Ende)")
     while True:
         line = await asyncio.to_thread(sys.stdin.readline)
@@ -220,12 +230,12 @@ async def read_console():
         if text == "auto":
             sim["manual"] = False
             sim["next_switch"] = 0.0
-            print("[Simulation] Automatischer Durchlauf fortgesetzt")
+            log("[Simulation] Automatischer Durchlauf fortgesetzt")
             continue
         try:
             watt = float(text.replace(",", "."))
         except ValueError:
-            print(f"[Simulation] Ungueltige Eingabe: {line.strip()!r}")
+            log(f"[Simulation] Ungueltige Eingabe: {line.strip()!r}")
             continue
         sim["manual"] = True
         _set_sim_power(watt)
@@ -259,7 +269,7 @@ def handle_pdu(pdu):
 
 async def handle_client(reader, writer):
     peer = writer.get_extra_info("peername")
-    print(f"[Modbus] Verbindung von {peer}")
+    log(f"[Modbus] Verbindung von {peer}")
     try:
         while True:
             header = await reader.readexactly(7)
@@ -276,7 +286,7 @@ async def handle_client(reader, writer):
     except (asyncio.IncompleteReadError, ConnectionError):
         pass
     finally:
-        print(f"[Modbus] Verbindung getrennt {peer}")
+        log(f"[Modbus] Verbindung getrennt {peer}")
         writer.close()
 
 
@@ -288,8 +298,15 @@ def parse_args(argv=None):
                "  %(prog)s --sim 1000               konstant 1000 W Bezug\n"
                "  %(prog)s --sim -1500              konstant 1500 W Einspeisung\n"
                "  %(prog)s --sim 400 500 1000 3000  Werte nacheinander, je 30 s\n"
-               "  %(prog)s --sim 400 3000 --sim-interval 10",
+               "  %(prog)s --sim 400 3000 --sim-interval 10\n"
+               "\n"
+               "Zwei Instanzen auf einem PC (eigener Port, Unit-ID und Seriennummer):\n"
+               "  %(prog)s --name Netz --port 502 --unit-id 1 --serial 10000001\n"
+               "  %(prog)s --name WP   --port 503 --unit-id 2 --serial 10000002 "
+               "--tasmota 10.10.55.106",
         formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.add_argument("--name", default=NAME,
+                   help="Name der Instanz, wird jeder Konsolenzeile vorangestellt")
     p.add_argument("--sim", type=float, nargs="+", metavar="W",
                    help="Simulationsmodus: Leistung(en) in W statt Tasmota "
                         "(positiv = Bezug, negativ = Einspeisung)")
@@ -297,39 +314,77 @@ def parse_args(argv=None):
                    help="Sekunden pro Wert bei mehreren --sim-Werten (Standard 30)")
     p.add_argument("--port", type=int, default=MODBUS_PORT,
                    help=f"Modbus-TCP-Port (Standard {MODBUS_PORT})")
+    p.add_argument("--host", default=MODBUS_HOST, metavar="IP",
+                   help=f"Lokale IP, auf der gelauscht wird (Standard {MODBUS_HOST} = alle)")
+    p.add_argument("--unit-id", type=int, default=UNIT_ID, metavar="ID",
+                   help="Modbus-Adresse/Unit-ID (1 = Primaerzaehler). "
+                        "Ohne Angabe wird auf jede Unit-ID geantwortet")
+    p.add_argument("--serial", default=SERIAL,
+                   help=f"Gemeldete Seriennummer (Standard {SERIAL}); "
+                        "bei mehreren Instanzen unterschiedlich waehlen")
     p.add_argument("--tasmota", default=TASMOTA_IP, metavar="IP",
                    help=f"IP des Tasmota-Lesekopfs (Standard {TASMOTA_IP})")
+    p.add_argument("--json-prefix", default=JSON_PREFIX,
+                   help=f"SML-Block in der Tasmota-Antwort (Standard {JSON_PREFIX})")
+    p.add_argument("--field-power", default=FIELD_POWER,
+                   help=f"Feld fuer die Leistung in W (Standard {FIELD_POWER})")
+    p.add_argument("--field-import", default=FIELD_IMPORT,
+                   help=f"Feld Zaehlerstand Bezug in kWh (Standard {FIELD_IMPORT}, "
+                        "'' = keins)")
+    p.add_argument("--field-export", default=FIELD_EXPORT,
+                   help=f"Feld Zaehlerstand Einspeisung in kWh (Standard {FIELD_EXPORT}, "
+                        "'' = keins)")
+    p.add_argument("--invert", action="store_true", default=INVERT_SIGN,
+                   help="Vorzeichen der Leistung umkehren")
     args = p.parse_args(argv)
     if args.sim_interval <= 0:
         p.error("--sim-interval muss > 0 sein")
+    if not 1 <= args.port <= 65535:
+        p.error("--port muss zwischen 1 und 65535 liegen")
+    if args.unit_id is not None and not 1 <= args.unit_id <= 247:
+        p.error("--unit-id muss zwischen 1 und 247 liegen")
+    if len(args.serial) > 32 or not args.serial.isascii():
+        p.error("--serial: hoechstens 32 Zeichen, nur ASCII")
     return args
 
 
 async def main(argv=None):
-    global MODBUS_PORT, TASMOTA_IP
+    global MODBUS_PORT, MODBUS_HOST, UNIT_ID, SERIAL, NAME, TASMOTA_IP
+    global JSON_PREFIX, FIELD_POWER, FIELD_IMPORT, FIELD_EXPORT, INVERT_SIGN
     args = parse_args(argv)
     MODBUS_PORT = args.port
+    MODBUS_HOST = args.host
+    UNIT_ID = args.unit_id
+    SERIAL = args.serial
+    NAME = args.name
     TASMOTA_IP = args.tasmota
+    JSON_PREFIX = args.json_prefix
+    FIELD_POWER = args.field_power
+    FIELD_IMPORT = args.field_import or None
+    FIELD_EXPORT = args.field_export or None
+    INVERT_SIGN = args.invert
 
-    print("=== Fronius GEN24 Smart Meter Emulator ===")
+    log("=== Fronius GEN24 Smart Meter Emulator ===")
     if args.sim:
         sim["values"] = args.sim
         werte = ", ".join(f"{w:.0f} W" for w in args.sim)
-        print(f"SIMULATIONSMODUS: {werte}"
+        log(f"SIMULATIONSMODUS: {werte}"
               + (f" (Wechsel alle {args.sim_interval:g} s)" if len(args.sim) > 1 else ""))
     else:
-        print(f"Tasmota: {TASMOTA_IP}")
+        log(f"Tasmota: {TASMOTA_IP}")
     init_static_registers()
     update_meter_registers()
     try:
         server = await asyncio.start_server(handle_client, MODBUS_HOST, MODBUS_PORT)
     except PermissionError:
-        print(f"[Fehler] Port {MODBUS_PORT} nicht erlaubt (Admin/root noetig).")
-        return
+        log(f"[Fehler] Port {MODBUS_PORT} nicht erlaubt (Admin/root noetig).")
+        return 1
     except OSError as exc:
-        print(f"[Fehler] Port {MODBUS_PORT} nicht verfuegbar: {exc}")
-        return
-    print(f"Modbus TCP auf {MODBUS_HOST}:{MODBUS_PORT}, Unit-ID {UNIT_ID or 'beliebig'}")
+        log(f"[Fehler] {MODBUS_HOST}:{MODBUS_PORT} nicht verfuegbar "
+            f"(laeuft dort schon eine Instanz?): {exc}")
+        return 1
+    unit = "beliebig" if UNIT_ID is None else UNIT_ID
+    log(f"Modbus TCP auf {MODBUS_HOST}:{MODBUS_PORT}, Unit-ID {unit}, SN {SERIAL}")
     tasks = [asyncio.create_task(server.serve_forever())]
     if args.sim:
         tasks.append(asyncio.create_task(simulate(args.sim_interval)))
@@ -346,6 +401,6 @@ async def main(argv=None):
 
 if __name__ == "__main__":
     try:
-        asyncio.run(main())
+        sys.exit(asyncio.run(main()))
     except KeyboardInterrupt:
-        print("\nBeendet.")
+        log("Beendet.")

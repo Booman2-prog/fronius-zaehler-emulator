@@ -42,8 +42,17 @@ Port 502 benötigt unter Linux root-Rechte bzw. unter Windows Administratorrecht
 |---|---|
 | `--tasmota IP` | IP des Tasmota-Lesekopfs (Standard aus der Konfiguration im Skript) |
 | `--port PORT` | Modbus-TCP-Port (Standard 502) |
+| `--host IP` | Lokale IP, auf der gelauscht wird (Standard `0.0.0.0` = alle Netzwerkkarten) |
+| `--unit-id ID` | Modbus-Adresse 1–247 (1 = Primärzähler); ohne Angabe wird auf jede ID geantwortet |
+| `--serial SN` | Gemeldete Seriennummer (Standard `00000001`) |
+| `--name NAME` | Name der Instanz, wird jeder Konsolenzeile vorangestellt |
+| `--json-prefix`, `--field-power`, `--field-import`, `--field-export` | Tasmota-Feldnamen (überschreiben die Werte im Skript) |
+| `--invert` | Vorzeichen der Leistung umkehren |
 | `--sim W [W ...]` | Simulationsmodus: Leistung(en) in W statt Tasmota |
 | `--sim-interval S` | Sekunden pro Wert bei mehreren `--sim`-Werten (Standard 30) |
+
+`0.0.0.0` ist keine Adresse zum Eintragen: Am GEN24 wird immer die echte LAN-IP des
+Rechners angegeben (`ipconfig` bzw. `hostname -I`).
 
 ### Simulationsmodus
 
@@ -63,6 +72,37 @@ Im laufenden Betrieb kann in der Konsole ein neuer Wert eingegeben werden:
 | `q` | Beenden |
 
 Die Energiezähler werden im Simulationsmodus aus der Leistung hochgezählt.
+
+### Mehrere Instanzen auf einem PC
+
+Jede Instanz ist ein eigener Prozess und braucht eine eigene Kombination aus IP und Port.
+Zusätzlich sollte jede Instanz eine eigene **Unit-ID** (Modbus-Adresse) und eine eigene
+**Seriennummer** bekommen, damit der Wechselrichter die Zähler auseinanderhalten kann.
+
+**Variante A – verschiedene Ports:**
+
+```
+python fronius_meter_emulator.py --name Netz --port 502 --unit-id 1 --serial 10000001
+python fronius_meter_emulator.py --name WP   --port 503 --unit-id 2 --serial 10000002 --tasmota 10.10.55.106
+```
+
+> Laut Fronius-Anleitung zum Smart Meter IP muss der Modbus-TCP-Port des Zählers „mit der
+> Einstellung am Wechselrichter übereinstimmen“. Ob der GEN24 pro Zähler einen eigenen Port
+> erlaubt, hängt von der Firmware ab – vorher im Webinterface prüfen. Geht das nicht,
+> Variante B verwenden.
+
+**Variante B – gleicher Port 502, zweite IP-Adresse:** Dem PC eine zweite feste IP geben
+(Windows: Netzwerkadapter → IPv4 → Erweitert → IP-Adressen hinzufügen) und jede Instanz
+nur auf ihrer IP lauschen lassen:
+
+```
+python fronius_meter_emulator.py --name Netz --host 10.10.55.20 --unit-id 1 --serial 10000001
+python fronius_meter_emulator.py --name WP   --host 10.10.55.21 --unit-id 2 --serial 10000002 --tasmota 10.10.55.106
+```
+
+Am GEN24 dann jeweils die passende IP und Modbus-Adresse eintragen. Pro Port und IP kann
+nur eine Instanz laufen; eine Instanz mit `0.0.0.0` belegt den Port auf allen IPs.
+Ist der Port schon belegt, beendet sich das Skript mit einer Fehlermeldung (Exit-Code 1).
 
 ## Konfiguration
 
@@ -85,7 +125,10 @@ Die Feldnamen lassen sich im Browser prüfen: `http://<tasmota>/cm?cmnd=Status%2
 
 Im Webinterface des Wechselrichters unter **Gerätekonfiguration → Komponenten →
 Primärzähler** einen Fronius Smart Meter IP hinzufügen, IP-Adresse des Rechners mit dem
-Emulator eintragen und als Position **Einspeisepunkt** wählen.
+Emulator eintragen und als Position **Einspeisepunkt** wählen. Die Modbus-Adresse muss
+zur `--unit-id` passen (Primärzähler = 1); ohne `--unit-id` antwortet der Emulator auf jede
+Adresse. Weitere Instanzen als Sekundärzähler (Verbraucher/Erzeuger) mit eigener
+Modbus-Adresse hinzufügen.
 
 ## Lizenz
 
