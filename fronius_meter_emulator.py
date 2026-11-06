@@ -24,7 +24,9 @@ eigene --unit-id und eigene --serial verwenden (siehe --help).
 
 import argparse
 import asyncio
+import errno
 import json
+import socket
 import struct
 import sys
 import time
@@ -290,6 +292,36 @@ async def handle_client(reader, writer):
         writer.close()
 
 
+def _bind_problem(exc):
+    """Genaue Ursache eines Bind-Fehlers ermitteln.
+
+    asyncio meldet nur 'could not bind on any address' ohne Fehlercode,
+    daher wird der Bind mit einem normalen Socket wiederholt.
+    """
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.bind((MODBUS_HOST, MODBUS_PORT))
+    except OSError as err:
+        exc = err
+    code = getattr(exc, "winerror", None) or exc.errno
+    if code in (errno.EADDRNOTAVAIL, 10049):
+        return (f"Die IP {MODBUS_HOST} gehoert nicht zu diesem PC. "
+                f"Eigene IPs: {', '.join(_local_ips()) or 'unbekannt'}")
+    if code in (errno.EADDRINUSE, 10048):
+        return "Port ist bereits belegt (laeuft dort schon eine Instanz?)"
+    if code in (errno.EACCES, 10013):
+        return "Zugriff verweigert (Admin/root noetig oder Port gesperrt)"
+    return str(exc)
+
+
+def _local_ips():
+    try:
+        infos = socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET)
+        return sorted({i[4][0] for i in infos})
+    except OSError:
+        return []
+
+
 def parse_args(argv=None):
     p = argparse.ArgumentParser(
         description="Fronius GEN24 Smart Meter Emulator (Modbus TCP / SunSpec)",
@@ -380,8 +412,7 @@ async def main(argv=None):
         log(f"[Fehler] Port {MODBUS_PORT} nicht erlaubt (Admin/root noetig).")
         return 1
     except OSError as exc:
-        log(f"[Fehler] {MODBUS_HOST}:{MODBUS_PORT} nicht verfuegbar "
-            f"(laeuft dort schon eine Instanz?): {exc}")
+        log(f"[Fehler] {MODBUS_HOST}:{MODBUS_PORT} nicht verfuegbar: {_bind_problem(exc)}")
         return 1
     unit = "beliebig" if UNIT_ID is None else UNIT_ID
     log(f"Modbus TCP auf {MODBUS_HOST}:{MODBUS_PORT}, Unit-ID {unit}, SN {SERIAL}")
