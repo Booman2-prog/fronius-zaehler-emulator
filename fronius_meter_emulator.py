@@ -18,8 +18,9 @@ Simulationsmodus (ohne Tasmota), z.B.:
     python fronius_meter_emulator.py --sim 400 500 1000 3000 --sim-interval 30
 Im laufenden Betrieb kann ein neuer Wert in der Konsole eingegeben werden.
 
-Mehrere Instanzen auf einem PC: je Instanz eigener --port (oder --host),
-eigene --unit-id und eigene --serial verwenden (siehe --help).
+Mehrere Instanzen auf einem PC: je Instanz eigene IP (--host, Port 502),
+eigene --unit-id und eigene --serial verwenden (siehe --help). Der GEN24
+akzeptiert laut Forenberichten keine mehreren Zaehler auf derselben IP.
 """
 
 import argparse
@@ -332,9 +333,9 @@ def parse_args(argv=None):
                "  %(prog)s --sim 400 500 1000 3000  Werte nacheinander, je 30 s\n"
                "  %(prog)s --sim 400 3000 --sim-interval 10\n"
                "\n"
-               "Zwei Instanzen auf einem PC (eigener Port, Unit-ID und Seriennummer):\n"
-               "  %(prog)s --name Netz --port 502 --unit-id 1 --serial 10000001\n"
-               "  %(prog)s --name WP   --port 503 --unit-id 2 --serial 10000002 "
+               "Zwei Instanzen auf einem PC (eigene IP, Unit-ID und Seriennummer):\n"
+               "  %(prog)s --name Netz --host 10.10.55.20 --unit-id 1 --serial 10000001\n"
+               "  %(prog)s --name WP   --host 10.10.55.21 --unit-id 2 --serial 10000002 "
                "--tasmota 10.10.55.106",
         formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--name", default=NAME,

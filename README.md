@@ -75,34 +75,33 @@ Die Energiezähler werden im Simulationsmodus aus der Leistung hochgezählt.
 
 ### Mehrere Instanzen auf einem PC
 
-Jede Instanz ist ein eigener Prozess und braucht eine eigene Kombination aus IP und Port.
-Zusätzlich sollte jede Instanz eine eigene **Unit-ID** (Modbus-Adresse) und eine eigene
-**Seriennummer** bekommen, damit der Wechselrichter die Zähler auseinanderhalten kann.
+Jede Instanz ist ein eigener Prozess. Jede Instanz bekommt eine eigene **IP-Adresse**,
+eine eigene **Unit-ID** (Modbus-Adresse) und eine eigene **Seriennummer**, damit der
+Wechselrichter die Zähler auseinanderhalten kann.
 
-**Variante A – verschiedene Ports:**
-
-```
-python fronius_meter_emulator.py --name Netz --port 502 --unit-id 1 --serial 10000001
-python fronius_meter_emulator.py --name WP   --port 503 --unit-id 2 --serial 10000002 --tasmota 10.10.55.106
-```
-
-> Laut Fronius-Anleitung zum Smart Meter IP muss der Modbus-TCP-Port des Zählers „mit der
-> Einstellung am Wechselrichter übereinstimmen“. Ob der GEN24 pro Zähler einen eigenen Port
-> erlaubt, hängt von der Firmware ab – vorher im Webinterface prüfen. Geht das nicht,
-> Variante B verwenden.
-
-**Variante B – gleicher Port 502, zweite IP-Adresse:** Dem PC eine zweite feste IP geben
-(Windows: Netzwerkadapter → IPv4 → Erweitert → IP-Adressen hinzufügen) und jede Instanz
-nur auf ihrer IP lauschen lassen:
+**Empfohlen – eigene IP pro Instanz, alle auf Port 502:** Dem PC zusätzliche feste
+IP-Adressen geben (Windows: Netzwerkadapter → IPv4 → Erweitert → IP-Adressen hinzufügen)
+und jede Instanz mit `--host` nur auf ihrer IP lauschen lassen:
 
 ```
 python fronius_meter_emulator.py --name Netz --host 10.10.55.20 --unit-id 1 --serial 10000001
 python fronius_meter_emulator.py --name WP   --host 10.10.55.21 --unit-id 2 --serial 10000002 --tasmota 10.10.55.106
 ```
 
-Am GEN24 dann jeweils die passende IP und Modbus-Adresse eintragen. Pro Port und IP kann
-nur eine Instanz laufen; eine Instanz mit `0.0.0.0` belegt den Port auf allen IPs.
-Ist der Port schon belegt, beendet sich das Skript mit einer Fehlermeldung (Exit-Code 1).
+Am GEN24 dann jeweils die passende IP und Modbus-Adresse eintragen. `--host` muss eine
+IP sein, die dem PC tatsächlich zugewiesen ist – sonst bricht das Skript mit einer
+Meldung samt Liste der eigenen IPs ab. Pro IP und Port kann nur eine Instanz laufen;
+eine Instanz mit `0.0.0.0` belegt den Port auf allen IPs. Bei Bind-Fehlern beendet sich
+das Skript mit Exit-Code 1.
+
+**Nicht empfohlen – gleiche IP, verschiedene Ports** (`--port 503`): Technisch läuft das,
+laut Berichten im Photovoltaikforum akzeptiert der GEN24 aber keine mehreren Zähler auf
+derselben IP mit unterschiedlichen Ports. Ungetestet.
+
+**MQTT:** Der GEN24-Komponententyp „Fronius Smart Meter (MQTT)“ ist nicht nutzbar – die
+Verbindung ist TLS-verschlüsselt mit Fronius-eigenen Zertifikaten und laut Fronius nur
+für Fronius-Produkte gedacht. Der Emulator wird daher immer als „Fronius Smart Meter (TCP)“
+eingebunden.
 
 ## Konfiguration
 
